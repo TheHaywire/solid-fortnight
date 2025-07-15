@@ -1,0 +1,133 @@
+import requests
+from bs4 import BeautifulSoup
+import csv
+from datetime import datetime
+import urllib.parse
+import time # For potential delays if needed
+
+def scrape_bbc_news_headlines():
+    """
+    Scrapes news headlines and their URLs from BBC News homepage
+    and saves them to a CSV file.
+    """
+    BASE_URL = "https://www.bbc.com"
+    NEWS_URL = f"{BASE_URL}/news"
+    
+    # Mimic a browser to avoid being blocked
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    output_filename = f"bbc_news_headlines_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    all_headlines_data = []
+
+    print(f"Attempting to scrape BBC News from: {NEWS_URL}")
+
+    try:
+        # 1. Fetch the HTML content
+        response = requests.get(NEWS_URL, headers=HEADERS, timeout=10)
+        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 2. Identify and Extract Headlines
+        # BBC News headlines are often found within <a> tags with a specific class,
+        # typically wrapping an <h3> tag which contains a <span> with the actual headline text.
+        # We look for the main promo links.
+        
+        # Look for <a> tags that have the class 'gs-c-promo-heading'
+        # These are commonly used for article links on the BBC.
+        promo_links = soup.find_all('a', class_='gs-c-promo-heading')
+
+        if not promo_links:
+            print("Warning: No elements found with class 'gs-c-promo-heading'. The website structure might have changed.")
+            print("Trying a broader search for <h3> elements within any link.")
+            # Fallback strategy: find all <h3> tags that are inside an <a> tag
+            # This is less specific but might catch some headlines if the main class changes.
+            headline_elements = soup.find_all('h3')
+            for h3_tag in headline_elements:
+                parent_link = h3_tag.find_parent('a')
+                if parent_link and '/news/' in parent_link.get('href', ''): # Ensure it's a news link
+                    headline_text = h3_tag.get_text(strip=True)
+                    relative_url = parent_link.get('href')
+                    full_url = urllib.parse.urljoin(BASE_URL, relative_url)
+                    
+                    if headline_text and full_url not in [item['URL'] for item in all_headlines_data]: # Avoid duplicates
+                         all_headlines_data.append({
+                            "Headline": headline_text,
+                            "URL": full_url,
+                            "Scrape_Timestamp": datetime.now().isoformat()
+                        })
+            print(f"Extracted {len(all_headlines_data)} headlines with fallback method.")
+            if not all_headlines_data:
+                print("No headlines found even with fallback. Exiting.")
+                return
+
+        for link in promo_links:
+            headline_text = ""
+            # The actual headline text is usually within a span inside an h3 inside the <a> tag
+            title_span = link.find('span', class_='gs-c-promo-heading__title')
+            if title_span:
+                headline_text = title_span.get_text(strip=True)
+            elif link.h3 and link.h3.span: # Fallback if class changes but structure remains
+                 headline_text = link.h3.span.get_text(strip=True)
+            elif link.h3: # Direct h3 text fallback
+                headline_text = link.h3.get_text(strip=True)
+            else: # Final fallback: get text directly from the anchor tag
+                headline_text = link.get_text(strip=True)
+
+            relative_url = link.get('href')
+            
+            # Construct full URL using urllib.parse.urljoin to handle relative URLs
+            full_url = urllib.parse.urljoin(BASE_URL, relative_url)
+
+            if headline_text and full_url not in [item['URL'] for item in all_headlines_data]: # Avoid duplicates
+                all_headlines_data.append({
+                    "Headline": headline_text,
+                    "URL": full_url,
+                    "Scrape_Timestamp": datetime.now().isoformat()
+                })
+        
+        print(f"Found {len(all_headlines_data)} headlines.")
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP error occurred: {e}")
+        print("Could not retrieve the page. Check the URL or your internet connection.")
+        return
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error occurred: {e}")
+        print("Could not connect to the website. Check your internet connection or the URL.")
+        return
+    except requests.exceptions.Timeout as e:
+        print(f"Timeout error occurred: {e}")
+        print("The request timed out. The server might be slow or unresponsive.")
+        return
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred during the request: {e}")
+        return
+    except Exception as e:
+        print(f"An unexpected error occurred during scraping: {e}")
+        return
+
+    if not all_headlines_data:
+        print("No headlines were successfully extracted. The website structure might have changed significantly.")
+        return
+
+    # 3. Save to CSV
+    try:
+        with open(output_filename, mode='w', newline='', encoding='utf-8') as file:
+            fieldnames = ["Headline", "URL", "Scrape_Timestamp"]
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+
+            writer.writeheader()
+            writer.writerows(all_headlines_data)
+
+        print(f"\nSuccessfully scraped {len(all_headlines_data)} headlines.")
+        print(f"Data saved to: {output_filename}")
+    except IOError as e:
+        print(f"Error writing to CSV file: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred during CSV writing: {e}")
+
+if __name__ == "__main__":
+    scrape_bbc_news_headlines()
